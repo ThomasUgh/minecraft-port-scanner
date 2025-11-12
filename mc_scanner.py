@@ -11,6 +11,7 @@ import sys
 import argparse
 import json
 import time
+import struct
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple, Optional, Dict
@@ -57,7 +58,7 @@ class MCServerScanner:
         
     def scan_tcp_port(self, host: str, port: int) -> bool:
         """
-        Scan a single TCP port
+        Scan a single TCP port with Minecraft-specific detection
         
         Args:
             host: Target IP address
@@ -70,14 +71,31 @@ class MCServerScanner:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
             result = sock.connect_ex((host, port))
-            sock.close()
-            return result == 0
+            
+            if result == 0:
+                try:
+                    if port in [19132, 19133] or port in range(19100, 19900):
+                        sock.close()
+                        return True
+                    
+                    if port == 25565 or port in range(25000, 26000):
+                        sock.close()
+                        return True
+                    
+                    sock.close()
+                    return True
+                except:
+                    sock.close()
+                    return True
+            else:
+                sock.close()
+                return False
         except socket.error:
             return False
     
     def scan_udp_port(self, host: str, port: int) -> bool:
         """
-        Scan a single UDP port (Minecraft Query Protocol)
+        Scan a single UDP port (Minecraft Bedrock/Query Protocol)
         
         Args:
             host: Target IP address
@@ -86,20 +104,65 @@ class MCServerScanner:
         Returns:
             True if port responds, False otherwise
         """
+        if port == 19132 or port in range(19100, 19900):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(self.timeout)
+                
+                # Bedrock/RakNet unconnected ping packet
+                bedrock_ping = bytes([
+                    0x01,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    # OFFLINE_MESSAGE_DATA_ID (magic bytes)
+                    0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe,
+                    0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78,
+                    # Client GUID
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+                ])
+                
+                sock.sendto(bedrock_ping, (host, port))
+                
+                try:
+                    data, _ = sock.recvfrom(4096)
+                    sock.close()
+                    if len(data) > 0 and data[0] == 0x1c:
+                        return True
+                except socket.timeout:
+                    sock.close()
+            except Exception:
+                pass
+        
         try:
-            # Minecraft Query protocol handshake
-            query_packet = b'\xFE\xFD\x09\x01\x02\x03\x04'
-            
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(self.timeout)
             
+            query_packet = b'\xFE\xFD\x09\x01\x02\x03\x04'
             sock.sendto(query_packet, (host, port))
-            data, _ = sock.recvfrom(1024)
-            sock.close()
             
-            return len(data) > 0
-        except (socket.timeout, socket.error):
-            return False
+            try:
+                data, _ = sock.recvfrom(1024)
+                sock.close()
+                return len(data) > 0
+            except socket.timeout:
+                sock.close()
+        except Exception:
+            pass
+        
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(self.timeout)
+            sock.sendto(b'\x00', (host, port))
+            
+            try:
+                data, _ = sock.recvfrom(1024)
+                sock.close()
+                return len(data) > 0
+            except socket.timeout:
+                sock.close()
+        except Exception:
+            pass
+        
+        return False
     
     def scan_port_worker(self, host: str, port: int, protocol: str) -> Optional[Tuple[int, str]]:
         """
@@ -138,11 +201,22 @@ class MCServerScanner:
         Returns:
             List of tuples containing (port, protocol) for open ports
         """
+        if protocol == 'both':
+            if (start_port <= 19132 <= end_port) or \
+               (start_port >= 19100 and end_port <= 19900):
+                print(f"{Colors.WARNING}[!] Detected Bedrock/Geyser port range - using both TCP and UDP")
+                protocol = 'both'
+        
         print(f"\n{Colors.INFO}[*] Starting port scan on {host}")
         print(f"{Colors.INFO}[*] Port range: {start_port}-{end_port}")
         print(f"{Colors.INFO}[*] Protocol: {protocol.upper()}")
         print(f"{Colors.INFO}[*] Threads: {self.threads}")
-        print(f"{Colors.INFO}[*] Timeout: {self.timeout}s\n")
+        print(f"{Colors.INFO}[*] Timeout: {self.timeout}s")
+        
+        if (start_port <= 19132 <= end_port) or (start_port >= 19100 and end_port <= 19900):
+            print(f"{Colors.WARNING}[!] Note: Bedrock servers primarily use UDP protocol\n")
+        else:
+            print("")
         
         open_ports = []
         total_ports = end_port - start_port + 1
@@ -168,7 +242,18 @@ class MCServerScanner:
                     if result:
                         for port_info in result:
                             open_ports.append(port_info)
-                            print(f'\n{Colors.SUCCESS}[+] Found open port: {port_info[0]}/{port_info[1]}')
+                            port_num, proto = port_info
+                            # Add port type hint
+                            port_hint = ""
+                            if port_num == 25565:
+                                port_hint = " (Java Edition)"
+                            elif port_num == 19132:
+                                port_hint = " (Bedrock Edition)"
+                            elif port_num in range(19100, 19900):
+                                port_hint = " (Geyser/Bedrock)"
+                            elif port_num == 25577:
+                                port_hint = " (BungeeCord)"
+                            print(f'\n{Colors.SUCCESS}[+] Found open port: {port_num}/{proto}{port_hint}')
                 except Exception as e:
                     print(f'\n{Colors.ERROR}[-] Error scanning port {port}: {e}')
         
@@ -186,7 +271,6 @@ class MCServerScanner:
             Dictionary containing server information
         """
         try:
-            # Try Java Edition first
             url = f"{API_BASE_URL}{address}"
             response = requests.get(url, timeout=5)
             data = response.json()
@@ -195,7 +279,6 @@ class MCServerScanner:
                 data['edition'] = 'Java'
                 return data
             
-            # Try Bedrock Edition
             url = f"{API_BASE_URL}bedrock/{address}"
             response = requests.get(url, timeout=5)
             data = response.json()
@@ -243,18 +326,30 @@ class MCServerScanner:
             print(f"{Colors.INFO}IP: {data.get('ip', 'N/A')}")
             print(f"{Colors.INFO}Edition: {data.get('edition', 'Unknown')}")
             
+            # Add protocol hint based on port
+            port = data.get('port', 0)
+            if port == 19132:
+                print(f"{Colors.WARNING}Protocol: UDP/TCP (Bedrock Edition)")
+            elif port in range(19100, 19900):
+                print(f"{Colors.WARNING}Protocol: UDP/TCP (Geyser/Bedrock)")
+            elif port == 25565:
+                print(f"{Colors.WARNING}Protocol: TCP (Java Edition)")
+            
+            # Version info
             version = data.get('version', 'Unknown')
             print(f"{Colors.INFO}Version: {version}")
             
+            # Player info
             players = data.get('players', {})
             online_players = players.get('online', 0)
             max_players = players.get('max', 0)
             print(f"{Colors.INFO}Players: {online_players}/{max_players}")
             
+            # Player list if available
             player_list = players.get('list', [])
             if player_list:
                 print(f"\n{Colors.INFO}Online Players:")
-                for player in player_list[:10]:
+                for player in player_list[:10]:  # Show max 10 players
                     if isinstance(player, dict):
                         print(f"  • {player.get('name', 'Unknown')}")
                     else:
@@ -290,15 +385,78 @@ class MCServerScanner:
                 print(f"{Colors.ERROR}Error: {data['error']}")
         
         print(f"\n{Colors.BOLD}{'='*60}\n")
+    
+    def test_bedrock_server(self, host: str, port: int = 19132) -> bool:
+        """
+        Special test for Bedrock servers with detailed output
+        
+        Args:
+            host: Server address
+            port: Port to test (default: 19132)
+            
+        Returns:
+            True if Bedrock server found
+        """
+        print(f"\n{Colors.BOLD}{'='*60}")
+        print(f"{Colors.BOLD}BEDROCK SERVER TEST")
+        print(f"{Colors.BOLD}{'='*60}\n")
+        
+        print(f"{Colors.INFO}[*] Testing {host}:{port}")
+        print(f"{Colors.INFO}[*] Timeout: {self.timeout}s\n")
+        
+        # Test UDP (primary for Bedrock)
+        print(f"{Colors.INFO}[1/3] Testing UDP connection...")
+        udp_result = self.scan_udp_port(host, port)
+        if udp_result:
+            print(f"{Colors.SUCCESS}  ✓ UDP port {port} is responding (Bedrock detected!)")
+        else:
+            print(f"{Colors.WARNING}  ✗ UDP port {port} not responding")
+        
+        # Test TCP (secondary)
+        print(f"{Colors.INFO}[2/3] Testing TCP connection...")
+        tcp_result = self.scan_tcp_port(host, port)
+        if tcp_result:
+            print(f"{Colors.SUCCESS}  ✓ TCP port {port} is open")
+        else:
+            print(f"{Colors.WARNING}  ✗ TCP port {port} not open")
+        
+        # Try API
+        print(f"{Colors.INFO}[3/3] Checking server status via API...")
+        data = self.get_server_status(f"{host}:{port}")
+        if data.get('online'):
+            print(f"{Colors.SUCCESS}  ✓ Server information retrieved")
+        else:
+            print(f"{Colors.WARNING}  ✗ No API response")
+        
+        # Results
+        print(f"\n{Colors.BOLD}Results:")
+        print(f"{Colors.BOLD}{'='*40}")
+        
+        if udp_result or tcp_result:
+            print(f"{Colors.SUCCESS}✓ Bedrock server detected!")
+            if not udp_result:
+                print(f"{Colors.WARNING}  ⚠ UDP not responding (may be firewall issue)")
+            if not tcp_result:
+                print(f"{Colors.INFO}  ℹ TCP not open (normal for some servers)")
+            return True
+        else:
+            print(f"{Colors.ERROR}✗ No Bedrock server detected on port {port}")
+            print(f"\n{Colors.WARNING}Troubleshooting tips:")
+            print(f"  • Increase timeout: add '-t 2.0' or '-t 3.0'")
+            print(f"  • Check firewall allows UDP traffic")
+            print(f"  • Verify server is online")
+            print(f"  • Try alternative ports: 19133, 19134")
+            print(f"  • Try Geyser range: 19100-19900")
+            return False
 
 def print_banner():
     """Print application banner"""
     banner = f"""
 {Colors.BOLD}{Colors.INFO}
 ╔══════════════════════════════════════════════════════════╗
-║                MC SERVER SCANNER v1.0                    ║
-║            Minecraft Server Port Scanner & API           ║
-║                   GitHub: @ThomasUgh                     ║
+║                MC SERVER SCANNER v1.0                     ║
+║            Minecraft Server Port Scanner & API            ║
+║                   GitHub: @yourusername                   ║
 ╚══════════════════════════════════════════════════════════╝
 
 {Colors.WARNING}Predefined Port Ranges:{Colors.RESET}
@@ -333,6 +491,8 @@ Examples:
   %(prog)s scan example.com --tcp              # Scan only TCP ports
   %(prog)s status play.example.com             # Get server status via API
   %(prog)s status example.com --scan -r geyser # Get status and scan Geyser ports
+  %(prog)s bedrock-test play.example.com       # Test specifically for Bedrock server
+  %(prog)s bedrock-test 192.168.1.1 -p 19133   # Test Bedrock on specific port
         """
     )
     
@@ -351,7 +511,6 @@ Examples:
     scan_parser.add_argument('--threads', type=int, default=MAX_THREADS,
                            help=f'Number of threads (default: {MAX_THREADS})')
     
-    # Server status mode
     status_parser = subparsers.add_parser('status', help='Get server status via API')
     status_parser.add_argument('server', help='Server address (IP:port or domain)')
     status_parser.add_argument('--scan', action='store_true',
@@ -362,6 +521,13 @@ Examples:
                              help='Use predefined port range for scanning')
     
     interactive_parser = subparsers.add_parser('interactive', help='Interactive mode')
+    
+    bedrock_parser = subparsers.add_parser('bedrock-test', help='Test specifically for Bedrock servers')
+    bedrock_parser.add_argument('server', help='Server address (IP or domain)')
+    bedrock_parser.add_argument('-p', '--port', type=int, default=19132,
+                              help='Port to test (default: 19132)')
+    bedrock_parser.add_argument('-t', '--timeout', type=float, default=2.0,
+                              help='Connection timeout in seconds (default: 2.0)')
     
     args = parser.parse_args()
     
@@ -390,6 +556,7 @@ Examples:
                         ports_to_scan.extend(range(start, end + 1))
                     else:
                         ports_to_scan.append(int(port_str))
+
                 start_port = min(ports_to_scan)
                 end_port = max(ports_to_scan)
                 print(f"{Colors.INFO}[*] Scanning specific ports: {port_range}")
@@ -413,16 +580,13 @@ Examples:
                 print(f"{Colors.ERROR}[-] Failed to resolve domain")
                 sys.exit(1)
         
-        # Configure scanner
         scanner.timeout = args.timeout
         scanner.threads = args.threads
         
-        # Perform scan
         start_time = time.time()
         open_ports = scanner.scan_range(target, start_port, end_port, protocol)
         scan_time = time.time() - start_time
         
-        # Display results
         print(f"\n{Colors.BOLD}{'='*60}")
         print(f"{Colors.BOLD}SCAN RESULTS")
         print(f"{Colors.BOLD}{'='*60}\n")
@@ -443,10 +607,9 @@ Examples:
         data = scanner.get_server_status(args.server)
         scanner.display_server_info(data)
         
-        # Optional port scan
         if args.scan and data.get('ip'):
             print(f"{Colors.INFO}[*] Starting port scan on resolved IP: {data['ip']}\n")
-          
+            
             port_range = args.range if hasattr(args, 'range') and args.range else args.ports
             
             try:
@@ -471,7 +634,6 @@ Examples:
                         print(f"    • Port {port}/{proto}")
     
     elif args.mode == 'interactive':
-        # Interactive mode
         while True:
             print(f"\n{Colors.BOLD}Select operation:")
             print("1. Scan port range")
@@ -544,7 +706,6 @@ Examples:
                     if data.get('ip'):
                         scan_choice = input(f"{Colors.INFO}Scan ports on {data['ip']}? (y/n): {Colors.RESET}")
                         if scan_choice.lower() == 'y':
-                            # Show predefined ranges
                             print(f"\n{Colors.INFO}Available port ranges:")
                             for name, (start, end) in PORT_RANGES.items():
                                 print(f"  • {name:12} : {start:5}-{end:5}")
@@ -554,7 +715,6 @@ Examples:
                                 ports = "default"
                             
                             try:
-                                # Parse port range
                                 if ports in PORT_RANGES:
                                     start_port, end_port = PORT_RANGES[ports]
                                     print(f"{Colors.SUCCESS}[+] Using range '{ports}': {start_port}-{end_port}")
@@ -584,6 +744,32 @@ Examples:
                 break
             except Exception as e:
                 print(f"{Colors.ERROR}[-] Error: {e}")
+    
+    elif args.mode == 'bedrock-test':
+        target = args.server
+        port = args.port
+        
+        if not target.replace('.', '').isdigit():
+            print(f"{Colors.INFO}[*] Resolving domain: {target}")
+            ip = scanner.resolve_domain(target)
+            if ip:
+                print(f"{Colors.SUCCESS}[+] Resolved to: {ip}")
+                target = ip
+            else:
+                print(f"{Colors.ERROR}[-] Failed to resolve domain")
+                sys.exit(1)
+        
+        scanner.timeout = args.timeout
+        result = scanner.test_bedrock_server(target, port)
+        
+        if not result and port == 19132:
+            print(f"\n{Colors.INFO}[*] Testing alternative Bedrock ports...")
+            alt_ports = [19133, 19134]
+            for alt_port in alt_ports:
+                print(f"\n{Colors.INFO}Testing port {alt_port}...")
+                if scanner.scan_udp_port(target, alt_port) or scanner.scan_tcp_port(target, alt_port):
+                    print(f"{Colors.SUCCESS}✓ Found Bedrock server on port {alt_port}!")
+                    break
     
     else:
         parser.print_help()
