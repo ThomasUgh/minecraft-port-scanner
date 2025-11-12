@@ -37,6 +37,12 @@ git clone https://github.com/yourusername/mc-server-scanner.git
 chmod +x mc_scanner.py
 ```
 
+### 3. Starten
+
+```bash
+python mc_scanner.py
+```
+
 ## 📖 Verwendung
 
 Das Tool bietet drei Hauptmodi: `scan`, `status` und `interactive`.
