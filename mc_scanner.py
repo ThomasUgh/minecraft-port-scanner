@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""
-MC Server Scanner - A comprehensive Minecraft server scanner
-Supports port scanning (TCP/UDP) and server status via API
-Author: Your Name
-GitHub: https://github.com/yourusername/mc-server-scanner
-"""
-
 import socket
 import sys
 import argparse
@@ -454,9 +447,9 @@ def print_banner():
     banner = f"""
 {Colors.BOLD}{Colors.INFO}
 ╔══════════════════════════════════════════════════════════╗
-║                MC SERVER SCANNER v1.0                     ║
-║            Minecraft Server Port Scanner & API            ║
-║                   GitHub: @yourusername                   ║
+║                MC SERVER SCANNER v1.0                    ║
+║            Minecraft Server Port Scanner & API           ║
+║                   GitHub: @ThomasUgh                     ║
 ╚══════════════════════════════════════════════════════════╝
 
 {Colors.WARNING}Predefined Port Ranges:{Colors.RESET}
