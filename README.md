@@ -14,9 +14,6 @@ Ein leistungsstarker und benutzerfreundlicher Minecraft Server Scanner mit Port-
 - **🌐 Domain-Auflösung**: Automatische Auflösung von Domains zu IP-Adressen
 - **⚡ Multi-Threading**: Schnelles Scanning mit konfigurierbaren Threads
 - **🎮 Multi-Edition Support**: Unterstützt Java Edition, Bedrock Edition und Geyser
-- **🎨 Farbige Ausgabe**: Übersichtliche, farbcodierte Terminal-Ausgabe
-- **🔄 Interaktiver Modus**: Benutzerfreundliches Menü für wiederholte Operationen
-- **📱 Cross-Platform**: Läuft auf Windows, Linux und macOS
 
 ## 📋 Voraussetzungen
 
