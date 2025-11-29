@@ -25,7 +25,7 @@ Ein leistungsstarker und benutzerfreundlicher Minecraft Server Scanner mit Port-
 ### 1. Repository klonen
 
 ```bash
-git clone https://github.com/yourusername/mc-server-scanner.git
+git clone https://github.com/ThomasUgh/minecraft-port-scanner.git
 ```
 
 ### 2. Ausführbar machen (Linux/macOS)
